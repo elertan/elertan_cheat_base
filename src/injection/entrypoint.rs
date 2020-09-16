@@ -6,6 +6,9 @@ pub mod windows {}
 macro_rules! make_entrypoint {
     ($attach_fn:expr, $detach_fn:expr) => {
         use $crate::winapi::shared::minwindef::*;
+        use $crate::once_cell::sync::OnceCell;
+        use std::sync::{mpsc, Mutex};
+        use std::sync::mpsc::{Sender};
         static INJECTION_ENTRYPOINT_THREAD_SENDER: OnceCell<Mutex<Sender<()>>> = OnceCell::new();
 
         #[no_mangle]
