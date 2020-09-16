@@ -57,7 +57,7 @@ pub fn windows_show_alert_dialog(title: &str, message: &str) -> Result<(), Box<d
     let title_wide: Vec<u16> = OsStr::new(title).encode_wide().chain(once(0)).collect();
     let message_wide: Vec<u16> = OsStr::new(message).encode_wide().chain(once(0)).collect();
     let ret = unsafe {
-        MessageBoxW(null_mut(), title_wide.as_ptr(), message_wide.as_ptr(), MB_OK)
+        MessageBoxW(null_mut(), message_wide.as_ptr(), title_wide.as_ptr(), MB_OK)
     };
     if ret == 0 { return Err(std::io::Error::last_os_error().into()); }
 

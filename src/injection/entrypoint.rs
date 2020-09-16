@@ -6,6 +6,7 @@ pub mod windows {}
 macro_rules! make_entrypoint {
     ($attach_fn:expr, $detach_fn:expr) => {
         use $crate::winapi::shared::minwindef::*;
+        static INJECTION_ENTRYPOINT_THREAD_SENDER: OnceCell<Mutex<Sender<()>>> = OnceCell::new();
 
         #[no_mangle]
         #[allow(non_snake_case, unused_variables)]
@@ -19,8 +20,20 @@ macro_rules! make_entrypoint {
             const DLL_PROCESS_DETACH: DWORD = 0;
 
             match call_reason {
-                DLL_PROCESS_ATTACH => $attach_fn(),
-                DLL_PROCESS_DETACH => $detach_fn(),
+                DLL_PROCESS_ATTACH => {
+                    let (tx, rx) = mpsc::channel();
+                    INJECTION_ENTRYPOINT_THREAD_SENDER.set(Mutex::new(tx)).expect("Failed to set thread kill sender");
+                    std::thread::spawn(move || {
+                        $attach_fn();
+                        rx.recv().expect("Failed to receive run thread kill command");
+                    });
+                },
+                DLL_PROCESS_DETACH => {
+                    let tx = INJECTION_ENTRYPOINT_THREAD_SENDER.get().expect("Failed to get run thread kill sender");
+                    let tx = tx.lock().expect("Failed to acquire run thread kill sender");
+                    tx.send(()).expect("Failed to send kill command to run thread");
+                    $detach_fn();
+                },
                 _ => ()
             }
 
