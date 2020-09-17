@@ -2,19 +2,19 @@
 pub mod direct_d3d9;
 
 #[derive(Debug)]
-pub enum InstallError {
+pub enum InstallError<T> {
     AlreadyInstalled,
-    Other,
+    Custom(T),
 }
 
 #[derive(Debug)]
-pub enum UninstallError {
+pub enum UninstallError<T> {
     NotInstalled,
-    Other,
+    Custom(T),
 }
 
-pub trait Hook {
+pub trait Hook<TInstallError, TUninstallError> {
     fn is_installed(&self) -> bool;
-    fn install(&mut self) -> Result<(), InstallError>;
-    fn uninstall(&mut self) -> Result<(), UninstallError>;
+    fn install(&mut self) -> Result<(), InstallError<TInstallError>>;
+    fn uninstall(&mut self) -> Result<(), UninstallError<TUninstallError>>;
 }

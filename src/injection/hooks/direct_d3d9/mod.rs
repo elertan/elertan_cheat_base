@@ -8,6 +8,16 @@ use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 
 const MODULE_NAME: &'static str = "d3d9.dll";
 
+#[derive(Debug)]
+pub enum DirectD3D9InstallError {
+    ModuleNotFound,
+}
+
+#[derive(Debug)]
+pub enum DirectD3D9UninstallError {
+    Other,
+}
+
 type EndSceneFn = unsafe extern "C" fn() -> HRESULT;
 
 extern "C" fn end_scene_hook() -> HRESULT {
@@ -24,46 +34,52 @@ impl DirectD3D9 {
     }
 }
 
-impl Hook for DirectD3D9 {
+impl Hook<DirectD3D9InstallError, DirectD3D9UninstallError> for DirectD3D9 {
     fn is_installed(&self) -> bool {
         self.installed
     }
 
-    fn install(&mut self) -> Result<(), InstallError> {
+    fn install(&mut self) -> Result<(), InstallError<DirectD3D9InstallError>> {
         if self.installed {
             return Err(InstallError::AlreadyInstalled);
         }
 
         let module_name =
             CString::new(MODULE_NAME).expect("Could not turn MODULE_NAME into a C string");
-        let module = unsafe { GetModuleHandleA(module_name.as_ptr()) };
+        let module = unsafe { GetModuleHandleA(module_name.as_ptr()) } as *const u8;
+        if module == std::ptr::null() {
+            return Err(InstallError::Custom(DirectD3D9InstallError::ModuleNotFound));
+        }
         println!("Module handle d3d9.dll addr: {:p}", module);
+
+        let vmt_addr = unsafe {
+            pattern_scan(
+                module,
+                0x128000,
+                &[
+                    Some(0xC7),
+                    Some(0x06),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(0x89),
+                    Some(0x86),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(0x89),
+                    Some(0x86),
+                ],
+            )
+            .expect("Pattern scan for d3d9 vmt failed")
+            .offset(2)
+        };
 
         // EndScene
         {
-            let end_scene_addr = unsafe {
-                pattern_scan(
-                    module as *const u8,
-                    0x128000,
-                    &[
-                        Some(0xC7),
-                        Some(0x06),
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(0x89),
-                        Some(0x86),
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(0x89),
-                        Some(0x86),
-                    ],
-                )
-            }
-            .expect("Pattern scan for end scene failed");
+            let end_scene_addr = unsafe { vmt_addr.offset(42) };
 
             let end_scene = unsafe { std::mem::transmute::<_, EndSceneFn>(end_scene_addr) };
             println!("End Scene address: {:p}", end_scene_addr);
@@ -73,7 +89,7 @@ impl Hook for DirectD3D9 {
         Ok(())
     }
 
-    fn uninstall(&mut self) -> Result<(), UninstallError> {
+    fn uninstall(&mut self) -> Result<(), UninstallError<DirectD3D9UninstallError>> {
         if !self.installed {
             return Err(UninstallError::NotInstalled);
         }
