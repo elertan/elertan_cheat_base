@@ -1,16 +1,21 @@
 use crate::injection::hooks::{Hook, InstallError, UninstallError};
 use crate::injection::memory::pattern_scan;
 use std::ffi::CString;
+use winapi::ctypes::c_void;
 use winapi::shared::minwindef::*;
 use winapi::shared::ntdef::HRESULT;
 use winapi::um::consoleapi::AllocConsole;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+use winapi::um::memoryapi::VirtualProtect;
+use winapi::um::winnt::*;
 
 const MODULE_NAME: &'static str = "d3d9.dll";
 
 #[derive(Debug)]
 pub enum DirectD3D9InstallError {
     ModuleNotFound,
+    VirtualProtectVMT,
+    VirtualProtectVMTRestore,
 }
 
 #[derive(Debug)]
@@ -20,6 +25,7 @@ pub enum DirectD3D9UninstallError {
 
 type EndSceneFn = unsafe extern "C" fn() -> HRESULT;
 
+#[no_mangle]
 extern "C" fn end_scene_hook() -> HRESULT {
     0
 }
@@ -80,9 +86,47 @@ impl Hook<DirectD3D9InstallError, DirectD3D9UninstallError> for DirectD3D9 {
         // EndScene
         {
             let end_scene_addr = unsafe { vmt_addr.offset(42) };
-
             let end_scene = unsafe { std::mem::transmute::<_, EndSceneFn>(end_scene_addr) };
             println!("End Scene address: {:p}", end_scene_addr);
+
+            let mut old_protection: DWORD = 0;
+            // Get access to write vmt memory area
+            {
+                let success = unsafe {
+                    VirtualProtect(
+                        end_scene_addr as *mut c_void,
+                        4,
+                        PAGE_EXECUTE_READWRITE,
+                        &mut old_protection,
+                    )
+                };
+                if success == 0 {
+                    return Err(InstallError::Custom(
+                        DirectD3D9InstallError::VirtualProtectVMT,
+                    ));
+                }
+            }
+
+            unsafe {
+                *(end_scene_addr as *mut u32) = std::mem::transmute::<_, u32>(&end_scene_hook);
+            }
+
+            // Restore previous protection for vmt memory area
+            {
+                let success = unsafe {
+                    VirtualProtect(
+                        end_scene_addr as *mut c_void,
+                        4,
+                        old_protection,
+                        &mut old_protection,
+                    )
+                };
+                if success == 0 {
+                    return Err(InstallError::Custom(
+                        DirectD3D9InstallError::VirtualProtectVMTRestore,
+                    ));
+                }
+            }
         }
 
         self.installed = true;
