@@ -30,7 +30,8 @@ pub enum D3D9HookUninstallError {
     Other,
 }
 
-type EndSceneFn = unsafe extern "C" fn() -> HRESULT;
+type Direct3D9Create9Fn = unsafe extern "system" fn(version: UINT) -> *mut IDirect3D9;
+type EndSceneFn = unsafe extern "system" fn() -> HRESULT;
 
 #[no_mangle]
 extern "system" fn end_scene_hook() -> HRESULT {
@@ -69,15 +70,18 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
 
         let module_name =
             CString::new(MODULE_NAME).expect("Could not turn MODULE_NAME into a C string");
-        let module = unsafe { GetModuleHandleA(module_name.as_ptr()) } as *const u8;
-        if module == std::ptr::null() {
+        let module = unsafe { GetModuleHandleA(module_name.as_ptr()) } as *mut HINSTANCE__;
+        if module == std::ptr::null_mut() {
             return Err(InstallError::Custom(D3D9HookInstallError::ModuleNotFound));
         }
         println!("Module handle d3d9.dll addr: {:p}", module);
 
         let d3d9_device = unsafe {
-            let d3d9_ctx = Direct3DCreate9(D3D_SDK_VERSION);
-            println!("Created d3d9 ctx: {:#?}", d3d9_ctx);
+            let x = CString::new("Direct3DCreate9").unwrap();
+            let direct3d_create_9_addr =
+                std::mem::transmute::<_, Direct3D9Create9Fn>(GetProcAddress(module, x.as_ptr()));
+            let d3d9_ctx = (direct3d_create_9_addr)(D3D_SDK_VERSION);
+            println!("Created d3d9 ctx: {:?}", d3d9_ctx);
             let mut display_mode: D3DDISPLAYMODE = std::mem::zeroed();
             let d3d9_ctx_ref = d3d9_ctx.as_ref().unwrap();
             d3d9_ctx_ref.GetAdapterDisplayMode(D3DADAPTER_DEFAULT, &mut display_mode);
@@ -130,8 +134,12 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
                 &mut present_parameters,
                 &mut device,
             );
+            let device_ref = device.as_ref().unwrap();
             println!("HRESULT -> {}", h_result);
-            println!("Got d3d9 device -> {:p}", device);
+            println!("Got d3d9 device -> {:?}", device);
+
+            let end_scene_addr = IDirect3DDevice9::EndScene as *const ();
+            println!("EndScene -> {:?}", end_scene_addr);
 
             device
         };
