@@ -35,10 +35,17 @@ impl<T: AsRef<str>, M: AsRef<str>> AlertDialog<T, M> {
     }
 
     pub fn show(&self) -> Result<(), ShowAlertDialogError> {
-        let title = self.title.as_ref().ok_or(ShowAlertDialogError::TitleNotSet)?;
-        let message = self.message.as_ref().ok_or(ShowAlertDialogError::MessageNotSet)?;
+        let title = self
+            .title
+            .as_ref()
+            .ok_or(ShowAlertDialogError::TitleNotSet)?;
+        let message = self
+            .message
+            .as_ref()
+            .ok_or(ShowAlertDialogError::MessageNotSet)?;
         #[cfg(windows)]
-        windows_show_alert_dialog(title.as_ref(), message.as_ref()).expect("windows_show_alert_dialog failed");
+        windows_show_alert_dialog(title.as_ref(), message.as_ref())
+            .expect("windows_show_alert_dialog failed");
         #[cfg(not(windows))]
         compile_error!("No show implementation for target_arch");
 
@@ -52,15 +59,21 @@ pub fn windows_show_alert_dialog(title: &str, message: &str) -> Result<(), Box<d
     use std::iter::once;
     use std::os::windows::ffi::OsStrExt;
     use std::ptr::null_mut;
-    use winapi::um::winuser::{MB_OK, MessageBoxW};
+    use winapi::um::winuser::{MessageBoxW, MB_OK};
 
     let title_wide: Vec<u16> = OsStr::new(title).encode_wide().chain(once(0)).collect();
     let message_wide: Vec<u16> = OsStr::new(message).encode_wide().chain(once(0)).collect();
     let ret = unsafe {
-        MessageBoxW(null_mut(), message_wide.as_ptr(), title_wide.as_ptr(), MB_OK)
+        MessageBoxW(
+            null_mut(),
+            message_wide.as_ptr(),
+            title_wide.as_ptr(),
+            MB_OK,
+        )
     };
-    if ret == 0 { return Err(std::io::Error::last_os_error().into()); }
+    if ret == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
 
     Ok(())
 }
-

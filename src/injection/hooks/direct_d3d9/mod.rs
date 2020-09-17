@@ -1,15 +1,16 @@
 use crate::injection::hooks::{Hook, InstallError, UninstallError};
-use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
+use crate::injection::memory::pattern_scan;
+use std::ffi::CString;
 use winapi::shared::minwindef::*;
 use winapi::shared::ntdef::HRESULT;
-use std::ffi::{CString};
+use winapi::um::consoleapi::AllocConsole;
+use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 
 const MODULE_NAME: &'static str = "d3d9.dll";
-const END_SCENE_NAME: &'static str = "EndScene";
 
-type EndSceneFn = extern fn() -> HRESULT;
+type EndSceneFn = unsafe extern "C" fn() -> HRESULT;
 
-extern fn end_scene_hook() -> HRESULT {
+extern "C" fn end_scene_hook() -> HRESULT {
     0
 }
 
@@ -19,9 +20,7 @@ pub struct DirectD3D9 {
 
 impl DirectD3D9 {
     pub fn new() -> Self {
-        Self {
-            installed: false,
-        }
+        Self { installed: false }
     }
 }
 
@@ -35,15 +34,39 @@ impl Hook for DirectD3D9 {
             return Err(InstallError::AlreadyInstalled);
         }
 
-        let module_name = CString::new(MODULE_NAME).expect("Could not turn MODULE_NAME into a C string");
+        let module_name =
+            CString::new(MODULE_NAME).expect("Could not turn MODULE_NAME into a C string");
         let module = unsafe { GetModuleHandleA(module_name.as_ptr()) };
+        println!("Module handle d3d9.dll addr: {:p}", module);
 
         // EndScene
         {
-            let end_scene_name = CString::new(END_SCENE_NAME).expect("Could not turn END_SCENE_NAME into a C string");
-            let proc_address = unsafe { GetProcAddress(module, end_scene_name.as_ptr()) };
+            let end_scene_addr = unsafe {
+                pattern_scan(
+                    module as *const u8,
+                    0x128000,
+                    &[
+                        Some(0xC7),
+                        Some(0x06),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(0x89),
+                        Some(0x86),
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(0x89),
+                        Some(0x86),
+                    ],
+                )
+            }
+            .expect("Pattern scan for end scene failed");
 
-            let end_scene = unsafe { std::mem::transmute::<*mut __some_function, EndSceneFn>(proc_address) };
+            let end_scene = unsafe { std::mem::transmute::<_, EndSceneFn>(end_scene_addr) };
+            println!("End Scene address: {:p}", end_scene_addr);
         }
 
         self.installed = true;
@@ -51,14 +74,13 @@ impl Hook for DirectD3D9 {
     }
 
     fn uninstall(&mut self) -> Result<(), UninstallError> {
-        if self.installed {
+        if !self.installed {
             return Err(UninstallError::NotInstalled);
         }
         self.installed = false;
         Ok(())
     }
 }
-
 
 impl Drop for DirectD3D9 {
     fn drop(&mut self) {
