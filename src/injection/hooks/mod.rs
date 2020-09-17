@@ -1,5 +1,5 @@
 #[cfg(windows)]
-pub mod direct_d3d9;
+pub mod d3d9;
 
 #[derive(Debug)]
 pub enum InstallError<T> {

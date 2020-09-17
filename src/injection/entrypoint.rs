@@ -5,10 +5,10 @@ pub mod windows {}
 #[macro_export]
 macro_rules! make_entrypoint {
     ($attach_fn:expr, $detach_fn:expr) => {
-        use $crate::winapi::shared::minwindef::*;
-        use $crate::once_cell::sync::OnceCell;
+        use std::sync::mpsc::Sender;
         use std::sync::{mpsc, Mutex};
-        use std::sync::mpsc::{Sender};
+        use $crate::once_cell::sync::OnceCell;
+        use $crate::winapi::shared::minwindef::*;
         static INJECTION_ENTRYPOINT_THREAD_SENDER: OnceCell<Mutex<Sender<()>>> = OnceCell::new();
 
         #[no_mangle]
@@ -16,28 +16,32 @@ macro_rules! make_entrypoint {
         pub extern "system" fn DllMain(
             dll_module: HINSTANCE,
             call_reason: DWORD,
-            reserved: LPVOID)
-            -> BOOL {
-
+            reserved: LPVOID,
+        ) -> BOOL {
             const DLL_PROCESS_ATTACH: DWORD = 1;
             const DLL_PROCESS_DETACH: DWORD = 0;
 
             match call_reason {
                 DLL_PROCESS_ATTACH => {
                     let (tx, rx) = mpsc::channel();
-                    INJECTION_ENTRYPOINT_THREAD_SENDER.set(Mutex::new(tx)).expect("Failed to set thread kill sender");
+                    INJECTION_ENTRYPOINT_THREAD_SENDER
+                        .set(Mutex::new(tx))
+                        .expect("Failed to set thread kill sender");
                     std::thread::spawn(move || {
                         $attach_fn();
-                        rx.recv().expect("Failed to receive run thread kill command");
+                        rx.recv()
+                            .expect("Failed to receive run thread kill command");
                     });
-                },
+                }
                 DLL_PROCESS_DETACH => {
-                    let tx = INJECTION_ENTRYPOINT_THREAD_SENDER.get().expect("Failed to get run thread kill sender");
+                    let tx = INJECTION_ENTRYPOINT_THREAD_SENDER
+                        .get()
+                        .expect("Failed to get run thread kill sender");
                     let tx = tx.lock().expect("Failed to acquire run thread kill sender");
-                    tx.send(()).expect("Failed to send kill command to run thread");
+                    let _ = tx.send(());
                     $detach_fn();
-                },
-                _ => ()
+                }
+                _ => (),
             }
 
             return TRUE;
@@ -58,7 +62,6 @@ macro_rules! make_entrypoint {
 
 #[cfg(linux)]
 pub mod linux {}
-
 
 #[cfg(linux)]
 #[macro_export]
