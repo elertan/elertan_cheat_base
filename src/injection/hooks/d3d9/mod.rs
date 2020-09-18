@@ -1,7 +1,9 @@
 use crate::injection::hooks::{Hook, InstallError, UninstallError};
 use crate::injection::memory::pattern_scan;
 use detour::static_detour;
+use once_cell::sync::OnceCell;
 use std::ffi::CString;
+use std::sync::{Arc, Mutex};
 use winapi::ctypes::c_void;
 use winapi::shared::d3d9::*;
 use winapi::shared::d3d9types::*;
@@ -11,10 +13,12 @@ use winapi::shared::windef::*;
 use winapi::um::consoleapi::AllocConsole;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::memoryapi::VirtualProtect;
+use winapi::um::processthreadsapi::GetCurrentProcessId;
 use winapi::um::winnt::*;
 use winapi::um::winuser::{
-    CreateWindowExA, DefWindowProcA, GetDesktopWindow, RegisterClassExA, CS_CLASSDC, WNDCLASSEXA,
-    WS_EX_NOACTIVATE, WS_EX_OVERLAPPEDWINDOW, WS_EX_TRANSPARENT,
+    CreateWindowExA, DefWindowProcA, EnumWindows, GetDesktopWindow, GetWindowThreadProcessId,
+    RegisterClassExA, CS_CLASSDC, WNDCLASSEXA, WS_EX_NOACTIVATE, WS_EX_OVERLAPPEDWINDOW,
+    WS_EX_TRANSPARENT,
 };
 
 const MODULE_NAME: &'static str = "d3d9.dll";
@@ -22,8 +26,6 @@ const MODULE_NAME: &'static str = "d3d9.dll";
 #[derive(Debug)]
 pub enum D3D9HookInstallError {
     ModuleNotFound,
-    // VirtualProtectVMT,
-    // VirtualProtectVMTRestore,
 }
 
 #[derive(Debug)]
@@ -31,7 +33,6 @@ pub enum D3D9HookUninstallError {
     Other,
 }
 
-// type Direct3D9Create9Fn = unsafe extern "system" fn(version: UINT) -> *mut IDirect3D9;
 type FnEndScene = unsafe extern "system" fn(device: *mut IDirect3DDevice9) -> HRESULT;
 
 static_detour! {
@@ -42,16 +43,6 @@ extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRESULT {
     println!("EndScene was called!");
     unsafe { EndSceneHook.call(device) }
 }
-
-// #[no_mangle]
-// unsafe extern "system" fn tmp_wnd_proc(
-//     hwnd: HWND,
-//     uint: UINT,
-//     wparam: WPARAM,
-//     lparam: LPARAM,
-// ) -> LRESULT {
-//     DefWindowProcA(hwnd, uint, wparam, lparam)
-// }
 
 pub struct D3D9Hook {
     installed: bool,
@@ -81,43 +72,14 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
             return Err(InstallError::Custom(D3D9HookInstallError::ModuleNotFound));
         }
         println!("Module handle d3d9.dll addr: {:p}", module);
-
-        // let vmt_pattern_scan_addr = unsafe {
-        //     pattern_scan(
-        //         module as *const u8,
-        //         0x128000,
-        //         &[
-        //             Some(0xC7),
-        //             Some(0x06),
-        //             None,
-        //             None,
-        //             None,
-        //             None,
-        //             Some(0x89),
-        //             Some(0x86),
-        //             None,
-        //             None,
-        //             None,
-        //             None,
-        //             Some(0x89),
-        //             Some(0x86),
-        //         ],
-        //     )
-        //     .expect("Pattern scan for d3d9 vmt failed")
-        // };
-        // dbg!(vmt_pattern_scan_addr);
-        // let vmt_pattern_scan_vmt_addr_offset = unsafe { vmt_pattern_scan_addr.offset(2) };
-        // dbg!(vmt_pattern_scan_vmt_addr_offset);
-        // let vmt_addr = unsafe { *(vmt_pattern_scan_vmt_addr_offset as *const u32) as *const u8 };
-        // dbg!(vmt_addr);
-        //
-        // let end_scene_idx = VmtMethod::EndScene as u8;
-        // dbg!(end_scene_idx);
-        // let end_scene_addr = unsafe { vmt_addr.offset(isize::from(end_scene_idx)) as *const u32 };
         let device = get_d3d_device().expect("Could not get device");
-        let end_scene_addr = get_d3d_device_vmt_method_address(device, VmtMethod::EndScene);
+        dbg!(device);
+        let device_ptr = *std::mem::transmute::<_, *const *const c_void>(device);
+        dbg!(device_ptr);
+        let end_scene_addr = get_d3d_device_vmt_method_address(device_ptr, VmtMethod::EndScene);
         dbg!(end_scene_addr);
-        let end_scene: FnEndScene = std::mem::transmute(end_scene_addr);
+        let end_scene: FnEndScene = std::mem::transmute((end_scene_addr));
+        dbg!(end_scene as *const ());
 
         EndSceneHook
             .initialize(end_scene, |device| end_scene_detour(device))
@@ -125,55 +87,6 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
         EndSceneHook
             .enable()
             .expect("Couldn't enable EndScene hook");
-        // let vmt = unsafe { std::mem::transmute::<_, &[u32; 120]>(*vmt_pattern_scan_addr) };
-        // let end_scene_idx = VmtMethods::EndScene as usize;
-        // dbg!(end_scene_idx);
-        //
-        // // EndScene
-        // {
-        //     let end_scene_addr = unsafe { vmt[end_scene_idx] };
-        //     let end_scene = unsafe { std::mem::transmute::<_, EndSceneFn>(end_scene_addr) };
-        //     println!("End Scene address: {:?}", end_scene_addr as *mut ());
-        //
-        //     let mut old_protection: DWORD = 0;
-        //     // Get access to write vmt memory area
-        //     {
-        //         let success = unsafe {
-        //             VirtualProtect(
-        //                 end_scene_addr as *mut c_void,
-        //                 4,
-        //                 PAGE_EXECUTE_READWRITE,
-        //                 &mut old_protection,
-        //             )
-        //         };
-        //         if success == 0 {
-        //             return Err(InstallError::Custom(
-        //                 D3D9HookInstallError::VirtualProtectVMT,
-        //             ));
-        //         }
-        //     }
-        //
-        //     unsafe {
-        //         *(end_scene_addr as *mut u32) = std::mem::transmute::<_, u32>(&end_scene_hook);
-        //     }
-        //
-        //     // Restore previous protection for vmt memory area
-        //     {
-        //         let success = unsafe {
-        //             VirtualProtect(
-        //                 end_scene_addr as *mut c_void,
-        //                 4,
-        //                 old_protection,
-        //                 &mut old_protection,
-        //             )
-        //         };
-        //         if success == 0 {
-        //             return Err(InstallError::Custom(
-        //                 D3D9HookInstallError::VirtualProtectVMTRestore,
-        //             ));
-        //         }
-        //     }
-        // }
 
         self.installed = true;
         Ok(())
@@ -203,12 +116,39 @@ impl Drop for D3D9Hook {
 enum GetD3DDeviceError {
     #[snafu(display("Could not create d3d"))]
     D3DCreationFailed,
-    #[snafu(display("Could not create device"))]
-    DeviceCreationFailed,
+    #[snafu(display("Could not create device (code: {})", failure_code))]
+    DeviceCreationFailed { failure_code: i32 },
 }
 
-unsafe fn get_process_window() -> *mut HWND__ {
-    unimplemented!();
+struct GetProcessWindowWindowValueWrapper(*mut HWND__);
+
+unsafe impl Send for GetProcessWindowWindowValueWrapper {}
+unsafe impl Sync for GetProcessWindowWindowValueWrapper {}
+
+static GET_PROCESS_WINDOW_WINDOW: OnceCell<GetProcessWindowWindowValueWrapper> = OnceCell::new();
+
+unsafe extern "system" fn get_process_window_enum_windows_callback(
+    handle: *mut HWND__,
+    lparam: LPARAM,
+) -> BOOL {
+    let mut wnd_proc_id: DWORD = std::mem::zeroed();
+    GetWindowThreadProcessId(handle, &mut wnd_proc_id);
+    if GetCurrentProcessId() != wnd_proc_id {
+        // Skip to next window
+        return 1;
+    }
+
+    // Window was found
+    GET_PROCESS_WINDOW_WINDOW
+        .set(GetProcessWindowWindowValueWrapper(handle))
+        .unwrap_or_else(|_| panic!("Failed to set GET_PROCESS_WINDOW_WINDOW"));
+    0
+}
+
+unsafe fn get_process_window() -> Result<*mut HWND__, ()> {
+    EnumWindows(Some(get_process_window_enum_windows_callback), 0);
+    let value = GET_PROCESS_WINDOW_WINDOW.get().ok_or_else(|| ())?;
+    Ok(value.0)
 }
 
 unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
@@ -222,7 +162,8 @@ unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
     let mut d3dpp: D3DPRESENT_PARAMETERS = std::mem::zeroed();
     d3dpp.Windowed = 0;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.hDeviceWindow = get_process_window();
+    d3dpp.hDeviceWindow = get_process_window().expect("Failed to get process window");
+    dbg!(d3dpp.hDeviceWindow);
 
     let mut dummy_device_created = d3d.CreateDevice(
         D3DADAPTER_DEFAULT,
@@ -245,22 +186,28 @@ unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
             &mut dummy_device,
         );
         if dummy_device_created != 0 {
-            return Err(GetD3DDeviceError::DeviceCreationFailed);
+            // d3d.Release();
+            return Err(GetD3DDeviceError::DeviceCreationFailed {
+                failure_code: dummy_device_created,
+            });
         }
     }
-    let dummy_device = dummy_device.as_ref().expect("Dummy device invalid pointer");
+    let device_ptr = dummy_device;
+    // dbg!(std::mem::transmute::<_, *const *const ()>(device_ptr));
+    let mut dummy_device = dummy_device.as_mut().expect("Dummy device invalid pointer");
 
-    dummy_device.Release();
-    d3d.Release();
+    // dummy_device.Release();
+    // d3d.Release();
 
-    Ok(std::ptr::null_mut())
+    Ok(device_ptr)
 }
 
 unsafe fn get_d3d_device_vmt_method_address(
-    device: *mut IDirect3DDevice9,
+    device: *const c_void,
     method: VmtMethod,
 ) -> *mut c_void {
-    todo!()
+    let ptr = device as *mut u32;
+    *(ptr.offset(isize::from(method as u8)) as *const *mut c_void)
 }
 
 #[repr(u8)]
