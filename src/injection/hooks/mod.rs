@@ -15,6 +15,6 @@ pub enum UninstallError<T> {
 
 pub trait Hook<TInstallError, TUninstallError> {
     fn is_installed(&self) -> bool;
-    fn install(&mut self) -> Result<(), InstallError<TInstallError>>;
-    fn uninstall(&mut self) -> Result<(), UninstallError<TUninstallError>>;
+    unsafe fn install(&mut self) -> Result<(), InstallError<TInstallError>>;
+    unsafe fn uninstall(&mut self) -> Result<(), UninstallError<TUninstallError>>;
 }

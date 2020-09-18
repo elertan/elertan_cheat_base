@@ -6,7 +6,9 @@ fn attach() {
     elertan_cheat_base::injection::console::open_console();
 
     let mut d3d9_hook = D3D9Hook::new();
-    d3d9_hook.install().unwrap();
+    unsafe {
+        d3d9_hook.install().unwrap();
+    }
 }
 
 fn detach() {
