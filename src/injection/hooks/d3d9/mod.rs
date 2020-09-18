@@ -39,8 +39,18 @@ static_detour! {
     static EndSceneHook: unsafe extern "system" fn(*mut IDirect3DDevice9) -> HRESULT;
 }
 
-extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRESULT {
-    println!("EndScene was called!");
+unsafe extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRESULT {
+    let device_ref = device.as_ref().expect("Could not get device as ref");
+
+    let rect_color = D3DCOLOR_COLORVALUE(1.0, 0.0, 0.0, 1.0);
+    let rect = D3DRECT {
+        x1: 10,
+        y1: 10,
+        x2: 100,
+        y2: 100,
+    };
+
+    device_ref.Clear(1, &rect, D3DCLEAR_TARGET, rect_color, 0.0, 0);
     unsafe { EndSceneHook.call(device) }
 }
 
@@ -72,9 +82,9 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
             return Err(InstallError::Custom(D3D9HookInstallError::ModuleNotFound));
         }
         println!("Module handle d3d9.dll addr: {:p}", module);
-        let device = get_d3d_device().expect("Could not get device");
-        dbg!(device);
-        let device_ptr = *std::mem::transmute::<_, *const *const c_void>(device);
+        let output = get_d3d_device().expect("Could not get device");
+        dbg!(output.device);
+        let device_ptr = *std::mem::transmute::<_, *const *const c_void>(output.device);
         dbg!(device_ptr);
         let end_scene_addr = get_d3d_device_vmt_method_address(device_ptr, VmtMethod::EndScene);
         dbg!(end_scene_addr);
@@ -151,12 +161,28 @@ unsafe fn get_process_window() -> Result<*mut HWND__, ()> {
     Ok(value.0)
 }
 
-unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
+struct GetD3DDeviceOutput {
+    context: *mut IDirect3D9,
+    device: *mut IDirect3DDevice9,
+}
+
+impl Drop for GetD3DDeviceOutput {
+    fn drop(&mut self) {
+        unsafe {
+            let device = self.device.as_ref().expect("Could not get device ptr");
+            device.Release();
+            let context = self.context.as_ref().expect("Could not get context ptr");
+            context.Release();
+        }
+    }
+}
+
+unsafe fn get_d3d_device() -> Result<GetD3DDeviceOutput, GetD3DDeviceError> {
     let d3d = Direct3DCreate9(D3D_SDK_VERSION);
     if d3d == std::ptr::null_mut() {
         return Err(GetD3DDeviceError::D3DCreationFailed);
     }
-    let d3d = d3d.as_ref().expect("Invalid d3d pointer");
+    let d3d_ref = d3d.as_ref().expect("Invalid d3d pointer");
 
     let mut dummy_device: *mut IDirect3DDevice9 = std::ptr::null_mut();
     let mut d3dpp: D3DPRESENT_PARAMETERS = std::mem::zeroed();
@@ -165,7 +191,7 @@ unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
     d3dpp.hDeviceWindow = get_process_window().expect("Failed to get process window");
     dbg!(d3dpp.hDeviceWindow);
 
-    let mut dummy_device_created = d3d.CreateDevice(
+    let mut dummy_device_created = d3d_ref.CreateDevice(
         D3DADAPTER_DEFAULT,
         D3DDEVTYPE_HAL,
         d3dpp.hDeviceWindow,
@@ -177,7 +203,7 @@ unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
     if dummy_device_created != 0 {
         d3dpp.Windowed = 1;
 
-        dummy_device_created = d3d.CreateDevice(
+        dummy_device_created = d3d_ref.CreateDevice(
             D3DADAPTER_DEFAULT,
             D3DDEVTYPE_HAL,
             d3dpp.hDeviceWindow,
@@ -186,20 +212,23 @@ unsafe fn get_d3d_device() -> Result<*mut IDirect3DDevice9, GetD3DDeviceError> {
             &mut dummy_device,
         );
         if dummy_device_created != 0 {
-            // d3d.Release();
+            d3d_ref.Release();
             return Err(GetD3DDeviceError::DeviceCreationFailed {
                 failure_code: dummy_device_created,
             });
         }
     }
-    let device_ptr = dummy_device;
+    // let device_ptr = dummy_device;
     // dbg!(std::mem::transmute::<_, *const *const ()>(device_ptr));
-    let mut dummy_device = dummy_device.as_mut().expect("Dummy device invalid pointer");
+    // let mut dummy_device = dummy_device.as_mut().expect("Dummy device invalid pointer");
 
     // dummy_device.Release();
     // d3d.Release();
 
-    Ok(device_ptr)
+    Ok(GetD3DDeviceOutput {
+        context: d3d,
+        device: dummy_device,
+    })
 }
 
 unsafe fn get_d3d_device_vmt_method_address(
