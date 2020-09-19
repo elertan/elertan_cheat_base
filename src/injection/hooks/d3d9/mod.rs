@@ -46,17 +46,23 @@ unsafe extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRE
     EndSceneHook.call(device)
 }
 
-pub struct D3D9Hook {
+pub struct D3D9Hook<'a> {
     installed: bool,
+    context: Option<&'a mut IDirect3D9>,
+    device: Option<&'a mut IDirect3DDevice9>,
 }
 
-impl D3D9Hook {
+impl<'a> D3D9Hook<'a> {
     pub fn new() -> Self {
-        Self { installed: false }
+        Self {
+            installed: false,
+            context: None,
+            device: None,
+        }
     }
 }
 
-impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
+impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
     fn is_installed(&self) -> bool {
         self.installed
     }
@@ -93,6 +99,19 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
             .enable()
             .expect("Couldn't enable EndScene hook");
 
+        self.context = Some(
+            output
+                .context
+                .as_mut()
+                .expect("Could not read context as &mut"),
+        );
+        self.device = Some(
+            output
+                .device
+                .as_mut()
+                .expect("Could not read device as &mut"),
+        );
+
         self.installed = true;
         debug!("Installed d3d9 hook");
         Ok(())
@@ -107,6 +126,11 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
         EndSceneHook
             .disable()
             .expect("Could not disable EndScene hook");
+        self.device.as_ref().expect("Device was not set").Release();
+        self.context
+            .as_ref()
+            .expect("Context was not set")
+            .Release();
         self.installed = false;
         debug!("Uninstalled d3d9 hook");
         Ok(())
@@ -135,6 +159,7 @@ enum GetD3DDeviceError {
 struct GetProcessWindowWindowValueWrapper(*mut HWND__);
 
 unsafe impl Send for GetProcessWindowWindowValueWrapper {}
+
 unsafe impl Sync for GetProcessWindowWindowValueWrapper {}
 
 unsafe extern "system" fn get_process_window_enum_windows_callback(
