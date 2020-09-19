@@ -1,8 +1,8 @@
 use crate::injection::hooks::{Hook, InstallError, UninstallError};
 use detour::static_detour;
 use log::debug;
-use once_cell::sync::OnceCell;
 use std::ffi::CString;
+use std::sync::Mutex;
 use winapi::ctypes::c_void;
 use winapi::shared::d3d9::*;
 use winapi::shared::d3d9types::*;
@@ -113,16 +113,16 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
     }
 }
 
-impl Drop for D3D9Hook {
-    fn drop(&mut self) {
-        if !self.installed {
-            return;
-        }
-        unsafe {
-            self.uninstall().expect("Could not uninstall");
-        }
-    }
-}
+// impl Drop for D3D9Hook {
+//     fn drop(&mut self) {
+//         if !self.installed {
+//             return;
+//         }
+//         unsafe {
+//             self.uninstall().expect("Could not uninstall");
+//         }
+//     }
+// }
 
 #[derive(Debug, snafu::Snafu)]
 enum GetD3DDeviceError {
@@ -137,12 +137,14 @@ struct GetProcessWindowWindowValueWrapper(*mut HWND__);
 unsafe impl Send for GetProcessWindowWindowValueWrapper {}
 unsafe impl Sync for GetProcessWindowWindowValueWrapper {}
 
-static GET_PROCESS_WINDOW_WINDOW: OnceCell<GetProcessWindowWindowValueWrapper> = OnceCell::new();
-
 unsafe extern "system" fn get_process_window_enum_windows_callback(
     handle: *mut HWND__,
-    _lparam: LPARAM,
+    lparam: LPARAM,
 ) -> BOOL {
+    let window_ptr: *mut Mutex<Option<GetProcessWindowWindowValueWrapper>> =
+        std::mem::transmute(lparam);
+    let window = window_ptr.as_mut().expect("Failed to get window from ptr");
+
     let mut wnd_proc_id: DWORD = std::mem::zeroed();
     GetWindowThreadProcessId(handle, &mut wnd_proc_id);
     if GetCurrentProcessId() != wnd_proc_id {
@@ -150,17 +152,28 @@ unsafe extern "system" fn get_process_window_enum_windows_callback(
         return 1;
     }
 
+    {
+        let mut window = window.lock().expect("Failed to lock window mutex");
+        *window = Some(GetProcessWindowWindowValueWrapper(handle));
+    }
+
     // Window was found
-    GET_PROCESS_WINDOW_WINDOW
-        .set(GetProcessWindowWindowValueWrapper(handle))
-        .unwrap_or_else(|_| panic!("Failed to set GET_PROCESS_WINDOW_WINDOW"));
     0
 }
 
 unsafe fn get_process_window() -> Result<*mut HWND__, ()> {
-    EnumWindows(Some(get_process_window_enum_windows_callback), 0);
-    let value = GET_PROCESS_WINDOW_WINDOW.get().ok_or_else(|| ())?;
-    Ok(value.0)
+    let mut window: Mutex<Option<GetProcessWindowWindowValueWrapper>> = Mutex::new(None);
+    {
+        let window_ptr = &mut window as *mut _;
+
+        EnumWindows(
+            Some(get_process_window_enum_windows_callback),
+            std::mem::transmute(window_ptr),
+        );
+    }
+    let window = window.lock().expect("Failed to lock window mutex");
+    let value_wrapper = window.as_ref().ok_or_else(|| ())?;
+    Ok(value_wrapper.0)
 }
 
 struct GetD3DDeviceOutput {
