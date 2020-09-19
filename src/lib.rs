@@ -1,3 +1,4 @@
+pub use log;
 pub use once_cell;
 #[cfg(windows)]
 pub use winapi;

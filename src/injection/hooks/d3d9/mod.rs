@@ -1,25 +1,17 @@
 use crate::injection::hooks::{Hook, InstallError, UninstallError};
-use crate::injection::memory::pattern_scan;
 use detour::static_detour;
+use log::debug;
 use once_cell::sync::OnceCell;
 use std::ffi::CString;
-use std::sync::{Arc, Mutex};
 use winapi::ctypes::c_void;
 use winapi::shared::d3d9::*;
 use winapi::shared::d3d9types::*;
 use winapi::shared::minwindef::*;
 use winapi::shared::ntdef::HRESULT;
 use winapi::shared::windef::*;
-use winapi::um::consoleapi::AllocConsole;
-use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
-use winapi::um::memoryapi::VirtualProtect;
+use winapi::um::libloaderapi::GetModuleHandleA;
 use winapi::um::processthreadsapi::GetCurrentProcessId;
-use winapi::um::winnt::*;
-use winapi::um::winuser::{
-    CreateWindowExA, DefWindowProcA, EnumWindows, GetDesktopWindow, GetWindowThreadProcessId,
-    RegisterClassExA, CS_CLASSDC, WNDCLASSEXA, WS_EX_NOACTIVATE, WS_EX_OVERLAPPEDWINDOW,
-    WS_EX_TRANSPARENT,
-};
+use winapi::um::winuser::{EnumWindows, GetWindowThreadProcessId};
 
 const MODULE_NAME: &'static str = "d3d9.dll";
 
@@ -51,7 +43,7 @@ unsafe extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRE
     };
 
     device_ref.Clear(1, &rect, D3DCLEAR_TARGET, rect_color, 0.0, 0);
-    unsafe { EndSceneHook.call(device) }
+    EndSceneHook.call(device)
 }
 
 pub struct D3D9Hook {
@@ -70,7 +62,9 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
     }
 
     unsafe fn install(&mut self) -> Result<(), InstallError<D3D9HookInstallError>> {
+        debug!("Attempting to install d3d9 hook");
         if self.installed {
+            debug!("d3d9 hook already installed");
             return Err(InstallError::AlreadyInstalled);
         }
 
@@ -79,17 +73,18 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
         let module = GetModuleHandleA(module_name.as_ptr());
 
         if module == std::ptr::null_mut() {
+            debug!("Could not find d3d9.dll");
             return Err(InstallError::Custom(D3D9HookInstallError::ModuleNotFound));
         }
-        println!("Module handle d3d9.dll addr: {:p}", module);
+        debug!("Module handle d3d9.dll addr: {:p}", module);
         let output = get_d3d_device().expect("Could not get device");
-        dbg!(output.device);
+        debug!("Device: {:?}", output.device);
         let device_ptr = *std::mem::transmute::<_, *const *const c_void>(output.device);
-        dbg!(device_ptr);
+        debug!("Device ptr: {:?}", device_ptr);
         let end_scene_addr = get_d3d_device_vmt_method_address(device_ptr, VmtMethod::EndScene);
-        dbg!(end_scene_addr);
-        let end_scene: FnEndScene = std::mem::transmute((end_scene_addr));
-        dbg!(end_scene as *const ());
+        debug!("EndScene addr: {:?}", end_scene_addr);
+        let end_scene: FnEndScene = std::mem::transmute(end_scene_addr);
+        debug!("EndScene located at: {:?}", end_scene as *const ());
 
         EndSceneHook
             .initialize(end_scene, |device| end_scene_detour(device))
@@ -99,14 +94,21 @@ impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
             .expect("Couldn't enable EndScene hook");
 
         self.installed = true;
+        debug!("Installed d3d9 hook");
         Ok(())
     }
 
     unsafe fn uninstall(&mut self) -> Result<(), UninstallError<D3D9HookUninstallError>> {
+        debug!("Attempting to uninstall d3d9 hook");
         if !self.installed {
+            debug!("d3d9 was not installed");
             return Err(UninstallError::NotInstalled);
         }
+        EndSceneHook
+            .disable()
+            .expect("Could not disable EndScene hook");
         self.installed = false;
+        debug!("Uninstalled d3d9 hook");
         Ok(())
     }
 }
@@ -139,7 +141,7 @@ static GET_PROCESS_WINDOW_WINDOW: OnceCell<GetProcessWindowWindowValueWrapper> =
 
 unsafe extern "system" fn get_process_window_enum_windows_callback(
     handle: *mut HWND__,
-    lparam: LPARAM,
+    _lparam: LPARAM,
 ) -> BOOL {
     let mut wnd_proc_id: DWORD = std::mem::zeroed();
     GetWindowThreadProcessId(handle, &mut wnd_proc_id);
@@ -189,7 +191,10 @@ unsafe fn get_d3d_device() -> Result<GetD3DDeviceOutput, GetD3DDeviceError> {
     d3dpp.Windowed = 0;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
     d3dpp.hDeviceWindow = get_process_window().expect("Failed to get process window");
-    dbg!(d3dpp.hDeviceWindow);
+    debug!(
+        "Handle device window (get process window): {:?}",
+        d3dpp.hDeviceWindow
+    );
 
     let mut dummy_device_created = d3d_ref.CreateDevice(
         D3DADAPTER_DEFAULT,
