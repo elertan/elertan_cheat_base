@@ -1,14 +1,38 @@
+use elertan_cheat_base::injection::entrypoint::{AttachError, DetachError, Entrypoint};
 use elertan_cheat_base::injection::helpers::AlertDialog;
+use elertan_cheat_base::once_cell::sync::Lazy;
+use std::sync::Mutex;
 
-fn attach() {
-    let dialog = AlertDialog::new()
-        .title("Simple Injection")
-        .message("It worked!");
-    dialog.show().expect("Failed to show dialog");
+#[derive(Debug, thiserror::Error)]
+pub enum AppAttachError {
+    #[error("Other")]
+    Other,
 }
 
-fn detach() {
+#[derive(Debug, thiserror::Error)]
+pub enum AppDetachError {
+    #[error("Other")]
+    Other,
 }
 
-elertan_cheat_base::make_entrypoint!(attach, detach);
+struct App {}
 
+impl Entrypoint<AppAttachError, AppDetachError> for App {
+    fn attach(&mut self) -> Result<(), AttachError<AppAttachError>> {
+        AlertDialog::new()
+            .title("ElertanCheatBase")
+            .message("Hello, Hook!")
+            .show()
+            .map_err(|_| AttachError::Custom(AppAttachError::Other))?;
+
+        Ok(())
+    }
+
+    fn detach(&mut self) -> Result<(), DetachError<AppDetachError>> {
+        Ok(())
+    }
+}
+
+static APP: Lazy<Mutex<App>> = Lazy::new(|| Mutex::new(App {}));
+
+elertan_cheat_base::generate_entrypoint!(APP);

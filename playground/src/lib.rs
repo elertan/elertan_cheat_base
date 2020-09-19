@@ -1,6 +1,9 @@
+use elertan_cheat_base::injection::entrypoint::{AttachError, DetachError, Entrypoint};
 use elertan_cheat_base::injection::hooks::d3d9::D3D9Hook;
 use elertan_cheat_base::injection::hooks::Hook;
-use once_cell::sync::OnceCell;
+use elertan_cheat_base::injection::hooks::Hookable;
+use once_cell::sync::{Lazy, OnceCell};
+use std::sync::Mutex;
 
 fn setup_logger() -> Result<(), fern::InitError> {
     fern::Dispatch::new()
@@ -13,32 +16,66 @@ fn setup_logger() -> Result<(), fern::InitError> {
                 message
             ))
         })
-        .level(elertan_cheat_base::log::LevelFilter::Debug)
+        .level(elertan_cheat_base::log::LevelFilter::Trace)
         // .chain(std::io::stdout())
         .chain(fern::log_file("elertan_cheat_base_playground.log")?)
         .apply()?;
     Ok(())
 }
 
-static mut D3D9_HOOK: OnceCell<D3D9Hook> = OnceCell::new();
+#[derive(Debug, thiserror::Error)]
+pub enum AppAttachError {
+    #[error("Other")]
+    Other,
+}
 
-fn attach() {
-    setup_logger().expect("Failed to set up logger");
-    // elertan_cheat_base::injection::console::open_console();
+#[derive(Debug, thiserror::Error)]
+pub enum AppDetachError {
+    #[error("Other")]
+    Other,
+}
 
-    let mut d3d9_hook = D3D9Hook::new();
-    unsafe {
-        d3d9_hook.install().unwrap();
-        let _ = D3D9_HOOK.set(d3d9_hook);
+struct App {
+    d3d9_hook: Option<D3D9Hook>,
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self { d3d9_hook: None }
     }
 }
 
-fn detach() {
-    unsafe {
-        let d3d9_hook = D3D9_HOOK.get_mut().unwrap();
-        d3d9_hook.uninstall().unwrap();
+impl Entrypoint<AppAttachError, AppDetachError> for App {
+    fn attach(&mut self) -> Result<(), AttachError<AppAttachError>> {
+        setup_logger().map_err(|_| AttachError::Custom(AppAttachError::Other))?;
+        elertan_cheat_base::log::debug!("Run started!");
+
+        D3D9Hook::set_device_hook_callback(Box::new(|device| {}));
+        let mut d3d9_hook = D3D9Hook::new();
+        unsafe {
+            d3d9_hook
+                .install()
+                .map_err(|_| AttachError::Custom(AppAttachError::Other))?
+        };
+
+        self.d3d9_hook = Some(d3d9_hook);
+
+        Ok(())
     }
-    // elertan_cheat_base::injection::console::close_console();
+
+    fn detach(&mut self) -> Result<(), DetachError<AppDetachError>> {
+        elertan_cheat_base::log::debug!("Cleaning up...");
+        let d3d9_hook = self.d3d9_hook.as_mut().expect("D3D9 hook was not set");
+        unsafe {
+            d3d9_hook
+                .uninstall()
+                .map_err(|_| DetachError::Custom(AppDetachError::Other))?
+        };
+
+        Ok(())
+    }
 }
 
-elertan_cheat_base::make_entrypoint!(attach, detach);
+static APP: Lazy<Mutex<App>> = Lazy::new(|| Mutex::new(App::new()));
+
+elertan_cheat_base::generate_entrypoint!(APP);

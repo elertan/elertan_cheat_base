@@ -1,7 +1,8 @@
-use crate::injection::hooks::{Hook, InstallError, UninstallError};
+use crate::injection::hooks::{Hook, Hookable, InstallError, UninstallError};
 use detour::static_detour;
 use log::debug;
 use std::ffi::CString;
+use std::ops::DerefMut;
 use std::sync::Mutex;
 use winapi::ctypes::c_void;
 use winapi::shared::d3d9::*;
@@ -15,13 +16,15 @@ use winapi::um::winuser::{EnumWindows, GetWindowThreadProcessId};
 
 const MODULE_NAME: &'static str = "d3d9.dll";
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum D3D9HookInstallError {
+    #[error("Module not found")]
     ModuleNotFound,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum D3D9HookUninstallError {
+    #[error("Other")]
     Other,
 }
 
@@ -31,8 +34,28 @@ static_detour! {
     static EndSceneHook: unsafe extern "system" fn(*mut IDirect3DDevice9) -> HRESULT;
 }
 
+lazy_static::lazy_static! {
+    static ref DEVICE_HOOK_CALLBACK: Mutex<Option<DeviceHookCallback>> = {
+        Mutex::new(None)
+    };
+}
+
+struct DeviceHookCallback(Box<dyn FnMut(&mut IDirect3DDevice9)>);
+unsafe impl Send for DeviceHookCallback {}
+unsafe impl Sync for DeviceHookCallback {}
+
 unsafe extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRESULT {
-    let device_ref = device.as_ref().expect("Could not get device as ref");
+    let device_ref = device.as_mut().expect("Could not get device as ref");
+
+    {
+        let mut device_hook_callback_guard = DEVICE_HOOK_CALLBACK
+            .lock()
+            .expect("Failed to lock current d3d9 hook");
+        if let Some(device_hook_callback) = device_hook_callback_guard.deref_mut() {
+            let callback = &mut device_hook_callback.0;
+            callback(device_ref);
+        }
+    }
 
     let rect_color = D3DCOLOR_COLORVALUE(1.0, 0.0, 0.0, 1.0);
     let rect = D3DRECT {
@@ -46,13 +69,13 @@ unsafe extern "system" fn end_scene_detour(device: *mut IDirect3DDevice9) -> HRE
     EndSceneHook.call(device)
 }
 
-pub struct D3D9Hook<'a> {
+pub struct D3D9Hook {
     installed: bool,
-    context: Option<&'a mut IDirect3D9>,
-    device: Option<&'a mut IDirect3DDevice9>,
+    context: Option<*mut IDirect3D9>,
+    device: Option<*mut IDirect3DDevice9>,
 }
 
-impl<'a> D3D9Hook<'a> {
+impl D3D9Hook {
     pub fn new() -> Self {
         Self {
             installed: false,
@@ -60,9 +83,30 @@ impl<'a> D3D9Hook<'a> {
             device: None,
         }
     }
+
+    pub fn set_device_hook_callback(callback: Box<dyn FnMut(&mut IDirect3DDevice9)>) {
+        let device_hook_callback = DeviceHookCallback(callback);
+        let mut dev_cb = DEVICE_HOOK_CALLBACK
+            .lock()
+            .expect("Failed to lock current device hook callback");
+        *dev_cb = Some(device_hook_callback);
+    }
 }
 
-impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
+unsafe impl Send for D3D9Hook {}
+unsafe impl Sync for D3D9Hook {}
+
+impl Hookable for D3D9Hook {
+    fn is_hookable() -> bool {
+        let module_name =
+            CString::new(MODULE_NAME).expect("Could not turn MODULE_NAME into a C string");
+        let module = unsafe { GetModuleHandleA(module_name.as_ptr()) };
+
+        module != std::ptr::null_mut()
+    }
+}
+
+impl Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook {
     fn is_installed(&self) -> bool {
         self.installed
     }
@@ -80,7 +124,7 @@ impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
 
         if module == std::ptr::null_mut() {
             debug!("Could not find d3d9.dll");
-            return Err(InstallError::Custom(D3D9HookInstallError::ModuleNotFound));
+            return Err(InstallError::Other(D3D9HookInstallError::ModuleNotFound));
         }
         debug!("Module handle d3d9.dll addr: {:p}", module);
         let output = get_d3d_device().expect("Could not get device");
@@ -99,18 +143,8 @@ impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
             .enable()
             .expect("Couldn't enable EndScene hook");
 
-        self.context = Some(
-            output
-                .context
-                .as_mut()
-                .expect("Could not read context as &mut"),
-        );
-        self.device = Some(
-            output
-                .device
-                .as_mut()
-                .expect("Could not read device as &mut"),
-        );
+        self.context = Some(output.context);
+        self.device = Some(output.device);
 
         self.installed = true;
         debug!("Installed d3d9 hook");
@@ -126,11 +160,19 @@ impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
         EndSceneHook
             .disable()
             .expect("Could not disable EndScene hook");
-        self.device.as_ref().expect("Device was not set").Release();
+        self.device
+            .as_ref()
+            .expect("Device was not set")
+            .as_mut()
+            .expect("Could not get ref")
+            .Release();
         self.context
             .as_ref()
             .expect("Context was not set")
+            .as_mut()
+            .expect("Could not get ref")
             .Release();
+
         self.installed = false;
         debug!("Uninstalled d3d9 hook");
         Ok(())
@@ -148,18 +190,17 @@ impl<'a> Hook<D3D9HookInstallError, D3D9HookUninstallError> for D3D9Hook<'a> {
 //     }
 // }
 
-#[derive(Debug, snafu::Snafu)]
+#[derive(Debug, thiserror::Error)]
 enum GetD3DDeviceError {
-    #[snafu(display("Could not create d3d"))]
+    #[error("Could not create d3d")]
     D3DCreationFailed,
-    #[snafu(display("Could not create device (code: {})", failure_code))]
+    #[error("Could not create device (code: {})", failure_code)]
     DeviceCreationFailed { failure_code: i32 },
 }
 
 struct GetProcessWindowWindowValueWrapper(*mut HWND__);
 
 unsafe impl Send for GetProcessWindowWindowValueWrapper {}
-
 unsafe impl Sync for GetProcessWindowWindowValueWrapper {}
 
 unsafe extern "system" fn get_process_window_enum_windows_callback(

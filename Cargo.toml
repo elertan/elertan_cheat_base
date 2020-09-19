@@ -9,8 +9,12 @@ edition = "2018"
 [dependencies]
 once_cell = "1.4.1"
 detour = "0.7.1"
-snafu = "0.6.8"
+thiserror = "1.0.20"
 log = "0.4.11"
+lazy_static = "1.4.0"
+log-panics = "2.0.0"
+imgui = "0.4.0"
+imgui-dx9-renderer = "0.4.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["winuser", "libloaderapi", "consoleapi", "wincon", "memoryapi", "d3d9", "d3d9types", "processthreadsapi"] }

@@ -11,3 +11,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 elertan_cheat_base = { path = "../.." }
+thiserror = "1.0.20"
