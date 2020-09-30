@@ -91,6 +91,14 @@ impl D3D9Hook {
             .expect("Failed to lock current device hook callback");
         *dev_cb = Some(device_hook_callback);
     }
+
+    pub fn context(&self) -> Option<*mut IDirect3D9> {
+        self.context
+    }
+
+    pub fn device(&self) -> Option<*mut IDirect3DDevice9> {
+        self.device
+    }
 }
 
 unsafe impl Send for D3D9Hook {}

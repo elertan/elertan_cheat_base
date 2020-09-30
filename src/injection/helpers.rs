@@ -46,8 +46,11 @@ impl<T: AsRef<str>, M: AsRef<str>> AlertDialog<T, M> {
         #[cfg(windows)]
         windows_show_alert_dialog(title.as_ref(), message.as_ref())
             .expect("windows_show_alert_dialog failed");
-        #[cfg(not(windows))]
-        compile_error!("No show implementation for target_arch");
+        #[cfg(target_os = "macos")]
+        macos_show_alert_dialog(title.as_ref(), message.as_ref())
+            .expect("macos_show_alert_dialog failed");
+        #[cfg(target_os = "linux")]
+        compile_error!("No show implementation for linux");
 
         Ok(())
     }
@@ -75,5 +78,13 @@ pub fn windows_show_alert_dialog(title: &str, message: &str) -> Result<(), Box<d
         return Err(std::io::Error::last_os_error().into());
     }
 
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn macos_show_alert_dialog(title: &str, message: &str) -> Result<(), Box<dyn Error>> {
+    // use coreaudio_sys::audio_unit::CFUserNotificationDisplayAlert;
+    //
+    // unsafe { CFUserNotificationDisplayAlert() };
     Ok(())
 }
