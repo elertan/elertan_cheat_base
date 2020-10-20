@@ -6,6 +6,7 @@ pub use imgui_winit_support;
 pub use log;
 pub use log_panics;
 pub use once_cell;
+pub use sysinfo;
 #[cfg(windows)]
 pub use winapi;
 #[cfg(windows)]

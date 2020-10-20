@@ -8,4 +8,3 @@ edition = "2018"
 
 [dependencies]
 elertan_cheat_base = { path = "../.." }
-sysinfo = "0.15.3"

@@ -1,7 +1,6 @@
-use elertan_cheat_base::injection::inject_dll_into_process;
+use elertan_cheat_base::injection::{find_process_id_by_process_name, inject_dll_into_process};
 use std::path::PathBuf;
 use structopt::StructOpt;
-use sysinfo::{ProcessExt, SystemExt};
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "Injects a dll into the target process")]
@@ -31,19 +30,10 @@ fn main() {
     let process_id = if let Some(pid) = opt.pid {
         pid
     } else if let Some(process_name) = opt.process_name {
-        let mut system = sysinfo::System::new_all();
-        system.refresh_all();
-
-        let processes = system.get_processes();
-        let process_result = processes
-            .into_iter()
-            .find(|(_pid, proc)| proc.name() == process_name)
-            .unwrap_or_else(|| {
-                println!("Process \"{}\" was not found", process_name);
-                panic!();
-            });
-
-        *process_result.0 as u32
+        find_process_id_by_process_name(process_name.as_str()).unwrap_or_else(|| {
+            println!("Process \"{}\" was not found", process_name);
+            panic!();
+        })
     } else {
         panic!();
     };

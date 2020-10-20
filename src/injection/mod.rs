@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::path::Path;
+use sysinfo::{ProcessExt, SystemExt};
 use winapi::shared::minwindef::{DWORD, FALSE, LPCVOID};
 use winapi::shared::ntdef::NULL;
 use winapi::um::libloaderapi::{GetProcAddress, LoadLibraryA};
@@ -27,6 +28,9 @@ pub enum InjectDllIntoProcessError {
     FailedToCreateRemoteThread,
 }
 
+/// Injects a DLL into a process
+/// `process_id` The process id
+/// `dll_path` The path of the dll that should be injected
 pub unsafe fn inject_dll_into_process(
     process_id: u32,
     dll_path: &Path,
@@ -95,4 +99,17 @@ pub unsafe fn inject_dll_into_process(
     }
 
     Ok(())
+}
+
+/// Finds the process id of a process by its name
+/// `process_name` The name of the process
+pub fn find_process_id_by_process_name(process_name: &str) -> Option<u32> {
+    let mut system = sysinfo::System::new_all();
+    system.refresh_all();
+
+    let processes = system.get_processes();
+    processes
+        .into_iter()
+        .find(|(_pid, proc)| proc.name() == process_name)
+        .map(|(pid, _)| *pid as u32)
 }
