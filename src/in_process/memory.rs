@@ -3,8 +3,7 @@
 ///
 /// `address` is the address to start scanning from.
 /// `length` is the maximum amount of bytes to scan from the address.
-/// `pattern` is the pattern of bytes to find.
-/// None is used as a wildcard
+/// `pattern` is the pattern of bytes to find. None is used to indicate a wildcard
 pub unsafe fn pattern_scan(
     address: *const u8,
     length: usize,
