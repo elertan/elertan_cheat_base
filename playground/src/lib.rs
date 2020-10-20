@@ -1,8 +1,8 @@
 use elertan_cheat_base::imgui::{FontConfig, FontGlyphRanges, FontSource};
-use elertan_cheat_base::injection::entrypoint::{AttachError, DetachError, Entrypoint};
-use elertan_cheat_base::injection::hooks::d3d9::D3D9Hook;
-use elertan_cheat_base::injection::hooks::Hook;
-use elertan_cheat_base::injection::hooks::Hookable;
+use elertan_cheat_base::in_process::entrypoint::{AttachError, DetachError, Entrypoint};
+use elertan_cheat_base::in_process::hooks::d3d9::D3D9Hook;
+use elertan_cheat_base::in_process::hooks::Hook;
+use elertan_cheat_base::in_process::hooks::Hookable;
 use once_cell::sync::{Lazy, OnceCell};
 use std::sync::Mutex;
 

@@ -11,4 +11,5 @@ pub use winapi;
 #[cfg(windows)]
 pub use wio;
 
+pub mod in_process;
 pub mod injection;

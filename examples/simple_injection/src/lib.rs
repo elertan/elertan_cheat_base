@@ -1,5 +1,5 @@
-use elertan_cheat_base::injection::entrypoint::{AttachError, DetachError, Entrypoint};
-use elertan_cheat_base::injection::helpers::AlertDialog;
+use elertan_cheat_base::in_process::entrypoint::{AttachError, DetachError, Entrypoint};
+use elertan_cheat_base::in_process::helpers::AlertDialog;
 use elertan_cheat_base::once_cell::sync::Lazy;
 use std::sync::Mutex;
 
